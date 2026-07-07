@@ -3,6 +3,16 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* LemonGraph design tokens */
+  --bg: #ffffff;
+  --ink: #1C1B29;
+  --ink-soft: #55536A;
+  --indigo: #3730A3;
+  --indigo-soft: #E4E1F5;
+  --line: #DAD6C9;
+  --mono: var(--font-geist-mono), 'Courier New', monospace;
+  --serif: Georgia, 'Times New Roman', serif;
 }
 
 @theme inline {
@@ -23,4 +33,9 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
