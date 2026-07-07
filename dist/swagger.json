@@ -1,0 +1,263 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Hack with Bay API",
+    "version": "1.0.0",
+    "description": "Business problem → academic query → paper search pipeline"
+  },
+  "servers": [
+    {
+      "url": "https://api.butterbase.ai/v1/app_agz6hkqam42m",
+      "description": "Butterbase (production)"
+    }
+  ],
+  "paths": {
+    "/fn/transform-query": {
+      "post": {
+        "summary": "Transform business problem to academic query",
+        "description": "Takes a plain-language business problem and returns a formal academic research query with keywords and research fields.",
+        "operationId": "transformQuery",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransformQueryRequest"
+              },
+              "examples": {
+                "manufacturing": {
+                  "summary": "Predictive maintenance",
+                  "value": {
+                    "problem": "Our factory equipment breaks down without warning. We have sensor data piling up — could we use it to predict failures in advance?"
+                  }
+                },
+                "recommendation": {
+                  "summary": "Explainable recommendations",
+                  "value": {
+                    "problem": "Our platform can't explain why content was recommended, which is hurting user trust."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Academic query successfully generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransformQueryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid request body",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream LLM error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fn/search-papers": {
+      "post": {
+        "summary": "Search top-3 papers on Semantic Scholar",
+        "description": "Queries Semantic Scholar with an academic query string and returns the top 3 papers sorted by citation count.",
+        "operationId": "searchPapers",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchPapersRequest"
+              },
+              "examples": {
+                "predictiveMaintenance": {
+                  "summary": "Predictive maintenance query",
+                  "value": {
+                    "query": "We propose a predictive maintenance framework that leverages multivariate sensor time-series data to forecast equipment failure before it occurs."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Top 3 papers returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchPapersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid request body",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "502": {
+            "description": "Semantic Scholar API error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fn/chat": {
+      "post": {
+        "summary": "Generic chat completion proxy",
+        "description": "OpenAI-compatible chat completions routed through tokenrouter. Defaults to gpt-5.4-nano.",
+        "operationId": "chat",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Chat completion response (OpenAI-compatible format)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ChatResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TransformQueryRequest": {
+        "type": "object",
+        "required": ["problem"],
+        "properties": {
+          "problem": {
+            "type": "string",
+            "description": "Plain-language business problem description",
+            "example": "Our factory equipment breaks down without warning."
+          }
+        }
+      },
+      "TransformQueryResponse": {
+        "type": "object",
+        "properties": {
+          "academic_query": {
+            "type": "string",
+            "description": "Formal academic research framing of the problem"
+          },
+          "keywords": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Technical search keywords for academic databases"
+          },
+          "research_fields": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Academic disciplines this problem falls under"
+          }
+        }
+      },
+      "SearchPapersRequest": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Academic query string (e.g. output of /fn/transform-query)"
+          }
+        }
+      },
+      "SearchPapersResponse": {
+        "type": "object",
+        "properties": {
+          "papers": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": { "type": "string" },
+                "abstract": { "type": "string" },
+                "year": { "type": "integer" },
+                "citationCount": { "type": "integer" },
+                "authors": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "url": { "type": "string", "format": "uri" },
+                "doi": { "type": "string", "nullable": true }
+              }
+            }
+          }
+        }
+      },
+      "ChatRequest": {
+        "type": "object",
+        "required": ["messages"],
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": { "type": "string", "enum": ["system", "user", "assistant"] },
+                "content": { "type": "string" }
+              }
+            }
+          },
+          "model": {
+            "type": "string",
+            "default": "openai/gpt-5.4-nano",
+            "description": "tokenrouter model ID"
+          }
+        }
+      },
+      "ChatResponse": {
+        "type": "object",
+        "description": "OpenAI-compatible chat completion response"
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "details": {}
+        }
+      }
+    }
+  }
+}
