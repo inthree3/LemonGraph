@@ -805,7 +805,7 @@ export default function Explore() {
     ]);
 
     try {
-      const res = await fetch('/api/decompose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ problem }) });
+      const res = await authFetch(`${API_BASE}/fn/decompose-problem`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ problem }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Decompose failed');
       const sps: SubProblem[] = data.subproblems ?? [];
@@ -821,7 +821,7 @@ export default function Explore() {
 
   // Step 2: Transform a single sub-problem → concept
   async function handleTransformOne(msgId: string, sp: SubProblem) {
-    const res = await fetch('/api/transform', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ problem: sp.text }) });
+    const res = await authFetch(`${API_BASE}/fn/transform-query`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ problem: sp.text }) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? 'Transform failed');
     const concept: Concept = { subproblemId: sp.id, ...data };
@@ -831,7 +831,7 @@ export default function Explore() {
 
   // Step 3: Search papers + auto-ingest to Neo4j
   async function handleSearchOne(msgId: string, concept: Concept) {
-    const res = await fetch('/api/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: concept.academic_query, keywords: concept.keywords }) });
+    const res = await authFetch(`${API_BASE}/fn/search-papers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: concept.academic_query, keywords: concept.keywords }) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? 'Search failed');
     const papers: Paper[] = (data.papers ?? []).map((p: Paper, i: number) => ({ ...p, rank: i }));
@@ -877,7 +877,7 @@ export default function Explore() {
     setGraphPhase('ingesting');
 
     try {
-      await fetch('/api/ingest', {
+      await authFetch(`${API_BASE}/fn/ingest-graph`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -893,7 +893,7 @@ export default function Explore() {
       setGraphPhase('recommending');
 
       const allPaperIds = Object.values(groups).flat().map(p => p.paperId);
-      const recRes = await fetch('/api/recommend', {
+      const recRes = await authFetch(`${API_BASE}/fn/recommend`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ paperIds: allPaperIds, limit: 5 }),

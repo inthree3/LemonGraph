@@ -1,6 +1,11 @@
+import { requireAuth } from '../_auth';
+
 const BUTTERBASE = 'https://api.butterbase.ai/v1/app_agz6hkqam42m';
 
 export async function POST(request: Request) {
+  const authError = await requireAuth(request);
+  if (authError) return authError;
+
   const { query, keywords } = await request.json();
   if (!query?.trim()) {
     return Response.json({ error: 'query is required' }, { status: 400 });
