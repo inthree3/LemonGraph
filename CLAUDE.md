@@ -119,6 +119,7 @@ hack-with-bay-3.0/
 - Pipeline preview: `Business → Sub-problems → Concepts → Papers`
 - Textarea: click triggers auth modal if not logged in
 - Example buttons: 3 preset problems
+- `"Open workspace without analyzing →"` text link below the card — enters 3-panel layout immediately without requiring auth or analysis; `forceActive` state drives this (`started = businesses.length > 0 || forceActive`)
 
 **Active screen** — 3-panel layout:
 ```
@@ -435,6 +436,7 @@ DomainCandidate, Patent, and Assignee nodes are not yet written to Neo4j.
 - **Keywords over academic_query for search**: Semantic Scholar returns 0 results for long formal sentences; keyword join works reliably
 - **PPR seeded per sub-problem**: each sub-problem gets its own PPR run over the CITES graph, seeded from that sub-problem's top-k matches — scores reflect local relevance, not global citation fame
 - **No redirect auth gate**: Page always visible; modal on interaction
+- **`forceActive` workspace entry**: `started = businesses.length > 0 || forceActive`; the "Open workspace without analyzing →" link sets `forceActive(true)` — no auth required, analysis itself still gates on login
 - **authFetch with silent refresh**: 401 → auto refresh → retry; user never sees a "session expired" error unless refresh also fails
 - **Pro gate before API calls**: `handleSearch` checks `sessions.length >= 1 && !isPro` before any LLM/S2AG calls — no wasted compute for blocked users
 - **Trust-based Pro activation**: `activate-pro` function uses auth token to identify user; no Stripe webhook needed for hackathon scope
