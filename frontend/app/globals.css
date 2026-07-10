@@ -4,15 +4,15 @@
   --background: #ffffff;
   --foreground: #171717;
 
-  /* LemonGraph design tokens */
+  /* MoatGraph design tokens */
   --bg: #ffffff;
-  --ink: #1C1B29;
-  --ink-soft: #55536A;
-  --indigo: #3730A3;
-  --indigo-soft: #E4E1F5;
-  --line: #DAD6C9;
-  --mono: var(--font-geist-mono), 'Courier New', monospace;
-  --serif: Georgia, 'Times New Roman', serif;
+  --ink: #1c1b29;
+  --ink-soft: #55536a;
+  --indigo: #3730a3;
+  --indigo-soft: #e4e1f5;
+  --line: #dad6c9;
+  --mono: var(--font-geist-mono), "Courier New", monospace;
+  --serif: Georgia, "Times New Roman", serif;
 }
 
 @theme inline {
@@ -36,6 +36,10 @@ body {
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }

@@ -116,36 +116,46 @@ hack-with-bay-3.0/
 
 **Active screen** — 3-panel layout:
 ```
-[Sessions w-56] │ [Graph Panel flex-1] │ [Chat Panel w-80]
+[Detail Panel w-64 (conditional)] │ [Graph Panel flex-1] │ [Right Panel w-80]
 ```
+Detail panel appears on the left only when a node is selected; otherwise the graph fills that space.
+Sessions are inside the Right Panel header (dropdown). Not a separate left column.
 
 **Graph Panel (center):**
-- React Flow + dagre 기반 계층형 그래프 (`@xyflow/react` + `@dagrejs/dagre`)
-- dagre TB 레이아웃으로 자동 위치 계산, 노드 추가 시 `fitView()` 자동 재조정
-- Custom node types:
-  - Business (gradient card)
-  - DomainCandidate (outline/muted when `dormant`; filled when `active`; clicking dormant triggers Steps 1–5 for that branch)
-  - SubProblem (indigo card) — bottom: moat recommendation sentence
-  - Concept (pill)
+- React Flow + dagre layout (`@xyflow/react` + `@dagrejs/dagre`), TB direction, `fitView()` on structure change
+- Custom node types (all have a small `×` delete button at top-right via `NodeDeleteBtn`):
+  - Business (dark gradient card)
+  - DomainCandidate / `domaincandidate` (teal card) — user-created node, always `active`; visually distinct from LLM-generated sub-problems
+  - SubProblem (indigo card) — shows "Map to concept →" button when selected and unmapped
+  - Concept (purple pill)
   - Paper (white card)
-  - Patent (amber card)
-  - Assignee (optional small tag)
-- `smoothstep` bezier edges; amber highlight on select; SubProblem→Concept, Concept→Paper/Patent edges: `animated: true`
-- Click any node → highlights branch; dormant DomainCandidate → shows "Explore this" button in detail panel
-- Each node has a delete affordance → triggers DETACH DELETE for that node + subtree
+  - Recommend (green card, PPR score)
+  - Patent (amber card) — not yet implemented
+  - AddNode (`add-node`) — dashed indigo phantom node, always present as a sibling of sub-problem nodes; clicking opens `AddNodeModal`
+- `smoothstep` bezier edges; amber highlight on select; SubProblem→Concept, Concept→Paper edges: `animated: true`; Business→AddNode edge: dashed + faint
+- Click any node → `NodeClickPanner` (inside ReactFlow context) smoothly pans + zooms (1.3×) to center on that node; also opens detail panel
+- `handleDeleteNode` in Explore handles frontend deletion: removes node + subtree from `subproblems`, `concepts`, `paperGroups`, `recommendations`, and syncs message state; Business node deletion calls `reset()`; handles both `subproblem` and `domaincandidate` node types
+- `handleAddDomainCandidate(text)` — creates a `SubProblem` with `userCreated: true`, adds it to state, then auto-chains `handleTransformOne` → `handleSearchOne` so the node runs the full pipeline without any manual clicks
 - Real-time build: nodes appear as each pipeline step completes
 
-**Chat Panel (right):**
-- GPT/Claude-style scrollable message history
+**Right Panel (right):**
+- Header: current session title + dropdown (session list, New Session, user/logout)
+- Scrollable message history below header; input at bottom
 - User messages: right-aligned indigo bubble
-- Assistant messages: step progress badges + sub-problem cards + paper mini-cards + patent mini-cards + moat recommendation callout per sub-problem
-- Bottom input for additional searches (each creates a new message thread)
-- Chat ↔ Graph selection synchronized (clicking paper/patent in either panel cross-highlights)
+- Assistant messages (`AssistantMessage` component): brief, no duplicate of graph content —
+  - Phase progress dots: `Decomposed · Concepts · Papers · PPR`
+  - `"N sub-problems identified"` count line
+  - Numbered inline list: sub-problem text + inline action link (`Map to concept →` / `Search papers →` / `N papers found`)
+  - `"PPR complete — N recommendations"` summary when done
+- Bottom textarea: additional searches (each creates a new message thread)
 
-**Right detail panel (node selected):**
-- DomainCandidate (dormant): candidate name + one-line reason proposed + "Explore this" button
-- SubProblem: moat recommendation sentence + supporting paper/patent cards
-- Paper/Patent: full metadata + score breakdown (Match, Segment, Credibility, Citations, Landscape Density)
+**Left Detail Panel (`w-64`, conditional):**
+- Appears when any graph node is selected; closes on `×` or when `selectedId` becomes null
+- Shows full text — no truncation anywhere
+- All long-form text fields (paper title, abstract, sub-problem text, academic query) are wrapped in `HighlightableText`: user selects text → "✦ Highlight" button pops up → click marks selection yellow (`#fef08a`); highlights stored per field key in component state
+- Paper: title (highlightable + linked), authors/year, MetricPills (Match %, Segments, Credibility, Citations), abstract (highlightable), "View paper" link
+- Sub-problem: full text (highlightable), keywords pills, research fields pills; label is "Added Node" if `userCreated: true`, "Sub-problem" otherwise
+- Concept: parent sub-problem quote (highlightable), academic query (highlightable), keywords pills, research fields pills
 
 ---
 
@@ -400,6 +410,11 @@ The ingest-graph function currently writes the legacy CITES schema. The full 5-l
 - **DELETE by path**: `DELETE /sessions/{id}` not `?id=eq.{id}` (Butterbase convention)
 - **GDS not used**: PPR implemented as JS iterative algorithm inside Butterbase function
 - **No separate embedding model**: `specter_v2` fetched from Semantic Scholar directly
+- **Node auto-pan on click**: `NodeClickPanner` component (inside ReactFlow context) listens to `selectedId` changes and calls `setCenter` to smoothly pan + zoom (1.3×) to the clicked node; eliminates manual scrolling to find selected node
+- **Frontend-only node deletion**: `handleDeleteNode` in Explore removes nodes from React state (`subproblems`, `concepts`, `paperGroups`, `recommendations`) and syncs `messages` in one call; Business node deletion triggers full `reset()`; Neo4j DETACH DELETE is NOT called (frontend-only for now)
+- **Text highlighting in detail panel**: `HighlightableText` wraps long-form text fields; uses `Selection` + `TreeWalker` to compute char offsets, stores `{start, end}[]` per field key in component state, renders highlighted ranges as `<mark>` with `#fef08a` background; floating "✦ Highlight" button appears at selection position via `fixed` positioning
+- **Simplified right panel chat**: `AssistantMessage` shows only phase dots + N sub-problems count + numbered inline list with action links — no paper cards or keyword pills; avoids duplicating graph content in the chat column; paper details are in the left detail panel instead
+- **User-created node (AddNode pattern)**: `SubProblem` has `userCreated?: boolean`; user-created entries use `type: 'domaincandidate'` in React Flow (teal style) vs. `type: 'subproblem'` (indigo) for LLM-generated ones; `handleTransformOne` returns `Promise<Concept>` so `handleAddDomainCandidate` can chain transform → search automatically; `AddNode` phantom node is always in the graph connected from Business with a dashed edge; clicking opens `AddNodeModal`; `onNodeClick` skips `add-node` id to avoid setting `selectedId`
 
 ---
 
@@ -407,7 +422,7 @@ The ingest-graph function currently writes the legacy CITES schema. The full 5-l
 
 - **Neo4j full ingest not yet wired**: Frontend builds the 5-level structure in memory but `ingest-graph` still writes the old CITES schema. Need to update `ingest-graph` to write Business/DomainCandidate/SubProblem/Concept/Paper/Patent nodes.
 - **Patent search not yet implemented**: `search-patents` (PatentsView/USPTO) Butterbase function not yet deployed; frontend pipeline wired to stub.
-- **DomainCandidate UI not yet built**: Extension step response shape defined, but dormant/active node rendering and "Explore this" interaction in React Flow not yet implemented.
+- **DomainCandidate UI partially implemented**: User-direct-add (`AddNode` → `AddNodeModal` → teal `DomainCandidateNode`, active state) is done. LLM-suggested dormant candidates (extension step response) are still not rendered — the dormant/active state machine and "Explore this" interaction are not yet built.
 - **Moat recommendation sentence not yet generated**: Step 5 LLM call combining top paper + patent whitespace per sub-problem not yet wired.
 - **Session load doesn't restore sub-problems**: Loading a past session shows a flat view since sub-problems/candidates aren't stored separately in Butterbase yet.
 - `specter_v2` not always available → `semantic_score` falls back to 0
