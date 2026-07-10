@@ -1150,7 +1150,7 @@ export default function Explore() {
         {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
         {showPaywall && (
           <ProPaywallModal
-            onClose={() => setShowPaywall(false)}
+            onClose={() => { setShowPaywall(false); setPendingProblem(null); }}
             onActivated={async () => {
               await checkPlan();
               setShowPaywall(false);
@@ -1226,7 +1226,7 @@ export default function Explore() {
       {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
       {showPaywall && (
         <ProPaywallModal
-          onClose={() => setShowPaywall(false)}
+          onClose={() => { setShowPaywall(false); setPendingProblem(null); }}
           onActivated={async () => {
             await checkPlan();
             setShowPaywall(false);

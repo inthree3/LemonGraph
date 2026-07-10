@@ -157,6 +157,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!refresh) {
       clearTokens();
       setUser(null);
+      setIsPro(false);
       setAccessToken(null);
       return res;
     }
@@ -170,6 +171,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!refreshRes.ok) {
       clearTokens();
       setUser(null);
+      setIsPro(false);
       setAccessToken(null);
       return res;
     }
