@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useAuth, API_BASE } from '../contexts/auth';
+import Dagre from '@dagrejs/dagre';
+import { ReactFlow, Background, Controls, Handle, Position, useReactFlow, type NodeProps, type Node as RFNode, type Edge as RFEdge } from '@xyflow/react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -95,6 +97,76 @@ function AuthModal({ onClose }: { onClose: () => void }) {
             {submitting ? '…' : mode === 'login' ? 'Log in' : 'Create account'}
           </button>
         </form>
+      </div>
+    </div>
+  );
+}
+
+// ── ProPaywallModal ───────────────────────────────────────────────────────────
+
+function ProPaywallModal({ onClose, onActivated }: { onClose: () => void; onActivated: () => Promise<void> }) {
+  const { authFetch } = useAuth();
+  const [activating, setActivating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleActivate() {
+    setActivating(true);
+    setError(null);
+    try {
+      const res = await authFetch(`${API_BASE}/fn/activate-pro`, { method: 'POST' });
+      if (!res.ok) throw new Error('Activation failed. Please try again.');
+      await onActivated();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Something went wrong');
+    } finally {
+      setActivating(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-md mx-4 rounded-2xl border border-zinc-200 bg-white p-8 shadow-xl">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-base font-semibold text-zinc-900">Unlock Pro</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600">
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="rounded-xl border border-zinc-200 overflow-hidden mb-6">
+          <div className="grid grid-cols-2">
+            <div className="px-4 py-3 border-r border-b border-zinc-200 bg-zinc-50">
+              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Free</p>
+            </div>
+            <div className="px-4 py-3 border-b border-zinc-200 bg-indigo-50">
+              <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wide">Pro · $9 / mo</p>
+            </div>
+            <div className="px-4 py-3 border-r border-zinc-100 text-sm text-zinc-500">1 session</div>
+            <div className="px-4 py-3 text-sm text-indigo-700 font-medium">Unlimited sessions</div>
+          </div>
+        </div>
+        <div className="space-y-3">
+          <a
+            href={process.env.NEXT_PUBLIC_STRIPE_PRO_LINK ?? '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block w-full rounded-lg bg-indigo-600 py-2.5 text-center text-sm font-medium text-white hover:bg-indigo-700 transition-colors"
+          >
+            Upgrade to Pro →
+          </a>
+          <button
+            onClick={handleActivate}
+            disabled={activating}
+            className="w-full rounded-lg border border-zinc-200 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 transition-colors"
+          >
+            {activating ? 'Activating…' : "I've paid, activate my account"}
+          </button>
+          {error && (
+            <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{error}</p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -231,78 +303,197 @@ function DetailPanel({ selectedId, subproblems, concepts, paperGroups, recommend
   );
 }
 
-// ── Graph Panel ───────────────────────────────────────────────────────────────
+// ── React Flow Graph ──────────────────────────────────────────────────────────
 
-const NODE_COLORS = {
-  business:   { bg: '#1e1b4b', text: '#fff', border: '#312e81' },
-  subproblem: { bg: '#4f46e5', text: '#fff', border: '#4338ca' },
-  concept:    { bg: '#7c3aed', text: '#fff', border: '#6d28d9' },
-  paper:      { bg: '#fff',    text: '#1f2937', border: '#c7d2fe' },
-  recommend:  { bg: '#f0fdf4', text: '#166534', border: '#86efac' },
+type GNodeData = {
+  label: string;
+  subtitle?: string;
+  isSelected: boolean;
+  canTransform?: boolean;
+  isTransforming?: boolean;
+  onTransform?: () => void;
 };
-const NODE_W = { business: 180, subproblem: 160, concept: 144, paper: 148, recommend: 148 };
 
-type NodePos = { x: number; y: number; type: keyof typeof NODE_COLORS; label: string; id: string; subtitle?: string };
-type EdgeDef = { x1: number; y1: number; x2: number; y2: number; highlighted: boolean; dashed?: boolean; weight?: number };
+// --- Custom node components (defined outside to avoid re-registration) ---
 
-function buildLayout(
-  problem: string, sps: SubProblem[], concepts: Concept[],
-  paperGroups: Record<string, Paper[]>, recs: Recommendation[],
-  w: number, h: number, selectedId: string | null
-) {
-  const nodes: NodePos[] = [];
-  const edges: EdgeDef[] = [];
-  const n = sps.length;
-  if (n === 0) return { nodes, edges };
+function BusinessNode({ data }: NodeProps<RFNode<GNodeData>>) {
+  const d = data as GNodeData;
+  return (
+    <>
+      <div style={{
+        background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)',
+        color: '#fff',
+        border: `2px solid ${d.isSelected ? '#f59e0b' : '#4338ca'}`,
+        borderRadius: 14, padding: '12px 18px', minWidth: 188,
+        boxShadow: d.isSelected
+          ? '0 0 0 3px rgba(245,158,11,0.35), 0 4px 16px rgba(30,27,75,0.4)'
+          : '0 4px 16px rgba(30,27,75,0.3)',
+        transition: 'border-color 0.15s, box-shadow 0.15s',
+      }}>
+        <div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.6, marginBottom: 4, fontFamily: 'var(--mono)' }}>Business</div>
+        <p style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.35, margin: 0 }}>{d.label}</p>
+      </div>
+      <Handle type="source" position={Position.Bottom}
+        style={{ background: '#6366f1', border: '2px solid #fff', width: 10, height: 10, bottom: -5 }} />
+    </>
+  );
+}
 
-  const hasRecs = recs.length > 0;
-  const yB = h * 0.06;
-  const yS = hasRecs ? h * 0.22 : h * 0.26;
-  const yC = hasRecs ? h * 0.42 : h * 0.50;
-  const yP = hasRecs ? h * 0.62 : h * 0.76;
-  const yR = h * 0.85;
-  const cx = w / 2;
-  const pad = w * 0.12;
-  const avail = w - 2 * pad;
-  const spXs = n === 1 ? [cx] : sps.map((_, i) => pad + (avail * i) / (n - 1));
+function SubProblemNode({ data }: NodeProps<RFNode<GNodeData>>) {
+  const d = data as GNodeData;
+  return (
+    <>
+      <Handle type="target" position={Position.Top}
+        style={{ background: '#818cf8', border: '2px solid #fff', width: 8, height: 8, top: -4 }} />
+      <div style={{
+        background: d.isSelected ? '#4338ca' : '#4f46e5',
+        color: '#fff',
+        border: `2px solid ${d.isSelected ? '#f59e0b' : '#6366f1'}`,
+        borderRadius: 10, padding: '8px 14px', minWidth: 162,
+        boxShadow: d.isSelected
+          ? '0 0 0 3px rgba(245,158,11,0.3), 0 2px 8px rgba(79,70,229,0.4)'
+          : '0 2px 8px rgba(79,70,229,0.3)',
+        transition: 'all 0.15s',
+      }}>
+        <div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.55, marginBottom: 3, fontFamily: 'var(--mono)' }}>Sub-problem</div>
+        <p style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.35, margin: 0 }}>{d.label}</p>
+        {d.canTransform && d.isSelected && (
+          <button
+            onClick={e => { e.stopPropagation(); d.onTransform?.(); }}
+            disabled={d.isTransforming}
+            style={{
+              marginTop: 8, width: '100%', padding: '4px 0',
+              background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.35)',
+              color: '#fff', borderRadius: 6, fontSize: 10, fontWeight: 500,
+              cursor: d.isTransforming ? 'not-allowed' : 'pointer',
+              opacity: d.isTransforming ? 0.5 : 1, whiteSpace: 'nowrap',
+            }}>
+            {d.isTransforming ? 'Mapping…' : 'Map to concept →'}
+          </button>
+        )}
+      </div>
+      <Handle type="source" position={Position.Bottom}
+        style={{ background: '#818cf8', border: '2px solid #fff', width: 8, height: 8, bottom: -4 }} />
+    </>
+  );
+}
 
-  nodes.push({ x: cx, y: yB, type: 'business', label: problem.slice(0, 50) + (problem.length > 50 ? '…' : ''), id: 'business' });
+function ConceptNode({ data }: NodeProps<RFNode<GNodeData>>) {
+  const d = data as GNodeData;
+  return (
+    <>
+      <Handle type="target" position={Position.Top}
+        style={{ background: '#a78bfa', border: '2px solid #fff', width: 8, height: 8, top: -4 }} />
+      <div style={{
+        background: d.isSelected ? '#6d28d9' : '#7c3aed',
+        color: '#fff',
+        border: `2px solid ${d.isSelected ? '#f59e0b' : '#8b5cf6'}`,
+        borderRadius: 999, padding: '8px 18px', minWidth: 152, textAlign: 'center',
+        boxShadow: d.isSelected
+          ? '0 0 0 3px rgba(245,158,11,0.3), 0 2px 10px rgba(124,58,237,0.4)'
+          : '0 2px 10px rgba(124,58,237,0.3)',
+        transition: 'all 0.15s',
+      }}>
+        <p style={{ fontSize: 11, fontWeight: 600, margin: 0, lineHeight: 1.3 }}>{d.label}</p>
+        {d.subtitle && <p style={{ fontSize: 9, opacity: 0.7, margin: '2px 0 0', lineHeight: 1.2, letterSpacing: '0.04em' }}>{d.subtitle}</p>}
+      </div>
+      <Handle type="source" position={Position.Bottom}
+        style={{ background: '#a78bfa', border: '2px solid #fff', width: 8, height: 8, bottom: -4 }} />
+    </>
+  );
+}
 
-  sps.forEach((sp, i) => {
-    const sx = spXs[i];
-    const isSel = sp.id === selectedId;
-    nodes.push({ x: sx, y: yS, type: 'subproblem', label: sp.text.slice(0, 50) + (sp.text.length > 50 ? '…' : ''), id: sp.id });
-    edges.push({ x1: cx, y1: yB, x2: sx, y2: yS, highlighted: isSel, weight: 1 });
+function PaperNode({ data }: NodeProps<RFNode<GNodeData>>) {
+  const d = data as GNodeData;
+  return (
+    <>
+      <Handle type="target" position={Position.Top}
+        style={{ background: '#c7d2fe', border: '2px solid #fff', width: 8, height: 8, top: -4 }} />
+      <div style={{
+        background: '#fff', color: '#1f2937',
+        border: `2px solid ${d.isSelected ? '#f59e0b' : '#c7d2fe'}`,
+        borderRadius: 8, padding: '8px 12px', minWidth: 158,
+        boxShadow: d.isSelected
+          ? '0 0 0 3px rgba(245,158,11,0.25), 0 2px 8px rgba(0,0,0,0.12)'
+          : '0 2px 6px rgba(0,0,0,0.08)',
+        transition: 'all 0.15s',
+      }}>
+        <div style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6366f1', marginBottom: 3, fontFamily: 'var(--mono)', opacity: 0.8 }}>Paper</div>
+        <p style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.35, margin: 0, color: '#111827' }}>{d.label}</p>
+        {d.subtitle && <p style={{ fontSize: 10, color: '#6b7280', margin: '3px 0 0', lineHeight: 1.2 }}>{d.subtitle}</p>}
+      </div>
+    </>
+  );
+}
 
-    const c = concepts.find(c => c.subproblemId === sp.id);
-    if (c) {
-      nodes.push({ x: sx, y: yC, type: 'concept', label: c.keywords.slice(0, 2).join(' · '), id: 'c-' + sp.id, subtitle: c.research_fields[0] });
-      edges.push({ x1: sx, y1: yS, x2: sx, y2: yC, highlighted: isSel, weight: 1 });
+function RecommendNode({ data }: NodeProps<RFNode<GNodeData>>) {
+  const d = data as GNodeData;
+  return (
+    <>
+      <Handle type="target" position={Position.Top}
+        style={{ background: '#86efac', border: '2px solid #fff', width: 8, height: 8, top: -4 }} />
+      <div style={{
+        background: d.isSelected ? '#dcfce7' : '#f0fdf4',
+        color: '#166534',
+        border: `2px solid ${d.isSelected ? '#f59e0b' : '#86efac'}`,
+        borderRadius: 8, padding: '8px 12px', minWidth: 158,
+        boxShadow: d.isSelected
+          ? '0 0 0 3px rgba(245,158,11,0.25), 0 2px 8px rgba(22,163,74,0.2)'
+          : '0 2px 6px rgba(22,163,74,0.15)',
+        transition: 'all 0.15s',
+      }}>
+        <div style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#16a34a', marginBottom: 3, fontFamily: 'var(--mono)', opacity: 0.8 }}>Recommended</div>
+        <p style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.35, margin: 0 }}>{d.label}</p>
+        {d.subtitle && <p style={{ fontSize: 10, color: '#16a34a', margin: '3px 0 0', lineHeight: 1.2, fontWeight: 600 }}>{d.subtitle}</p>}
+      </div>
+    </>
+  );
+}
 
-      const papers = (paperGroups[sp.id] ?? []).slice(0, 3);
-      const spread = Math.min(w * 0.08, 68);
-      const offsets = papers.length === 1 ? [0] : papers.length === 2 ? [-spread / 2, spread / 2] : [-spread, 0, spread];
-      papers.forEach((p, pi) => {
-        const px = sx + offsets[pi];
-        const isPSel = p.paperId === selectedId;
-        nodes.push({ x: px, y: yP, type: 'paper', label: p.title.slice(0, 36) + (p.title.length > 36 ? '…' : ''), id: p.paperId, subtitle: p.year ? `${p.year} · ${p.citationCount?.toLocaleString()}` : '' });
-        edges.push({ x1: sx, y1: yC, x2: px, y2: yP, highlighted: isSel || isPSel, weight: 1 - pi * 0.25 });
-      });
-    }
+const NODE_TYPES = {
+  business: BusinessNode,
+  subproblem: SubProblemNode,
+  concept: ConceptNode,
+  paper: PaperNode,
+  recommend: RecommendNode,
+};
+
+const NODE_DIMS: Record<string, { w: number; h: number }> = {
+  business:   { w: 200, h: 64 },
+  subproblem: { w: 174, h: 56 },
+  concept:    { w: 172, h: 50 },
+  paper:      { w: 170, h: 64 },
+  recommend:  { w: 170, h: 64 },
+};
+
+function computeDagreLayout(
+  rawNodes: { id: string; type: string }[],
+  rawEdges: { source: string; target: string }[]
+): Map<string, { x: number; y: number }> {
+  const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: 'TB', ranksep: 96, nodesep: 36, edgesep: 10 });
+  rawNodes.forEach(n => {
+    const d = NODE_DIMS[n.type] ?? { w: 170, h: 56 };
+    g.setNode(n.id, { width: d.w, height: d.h });
   });
+  rawEdges.forEach(e => g.setEdge(e.source, e.target));
+  Dagre.layout(g);
+  const posMap = new Map<string, { x: number; y: number }>();
+  rawNodes.forEach(n => {
+    const pos = g.node(n.id);
+    const d = NODE_DIMS[n.type] ?? { w: 170, h: 56 };
+    posMap.set(n.id, { x: pos.x - d.w / 2, y: pos.y - d.h / 2 });
+  });
+  return posMap;
+}
 
-  if (hasRecs) {
-    const recSpread = Math.min(w * 0.12, 100);
-    const mid = (recs.length - 1) / 2;
-    recs.slice(0, 5).forEach((r, i) => {
-      const rx = cx + (i - mid) * recSpread;
-      const isRSel = r.paperId === selectedId;
-      nodes.push({ x: rx, y: yR, type: 'recommend', label: r.title.slice(0, 36) + (r.title.length > 36 ? '…' : ''), id: r.paperId, subtitle: `PPR ${r.scores.final.toFixed(2)}` });
-      edges.push({ x1: cx, y1: yP, x2: rx, y2: yR, highlighted: isRSel, dashed: true, weight: r.scores.final });
-    });
-  }
-
-  return { nodes, edges };
+function FitOnStructureChange({ nodeCount }: { nodeCount: number }) {
+  const { fitView } = useReactFlow();
+  useEffect(() => {
+    const t = setTimeout(() => fitView({ padding: 0.22, duration: 380 }), 80);
+    return () => clearTimeout(t);
+  }, [nodeCount]); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
 }
 
 function GraphPanel({
@@ -314,79 +505,154 @@ function GraphPanel({
   selectedId: string | null; onSelect: (id: string | null) => void; phase: Phase;
   activeMsgId?: string; onTransformSp?: (msgId: string, sp: SubProblem) => Promise<void>;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ w: 900, h: 600 });
-  const [vp, setVp] = useState({ x: 0, y: 0, scale: 1 });
-  const isDragging = useRef(false);
-  const dragStart = useRef({ x: 0, y: 0, vpX: 0, vpY: 0 });
   const [graphTransformingId, setGraphTransformingId] = useState<string | null>(null);
+  const [rfNodes, setRfNodes] = useState<RFNode<GNodeData>[]>([]);
+  const [rfEdges, setRfEdges] = useState<RFEdge[]>([]);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const obs = new ResizeObserver(([e]) => setSize({ w: e.contentRect.width, h: e.contentRect.height }));
-    obs.observe(containerRef.current);
-    return () => obs.disconnect();
-  }, []);
-
-  useEffect(() => { setVp({ x: 0, y: 0, scale: 1 }); }, [problem]);
-
-  const { w, h } = size;
-  const { nodes, edges } = buildLayout(problem, subproblems, concepts, paperGroups, recommendations, w, h, selectedId);
-  const hasRecs = recommendations.length > 0;
-  const conceptIds = new Set(concepts.map(c => c.subproblemId));
-
-  const LEVELS = [
-    { y: h * 0.06, label: 'Business', color: '#1e1b4b' },
-    { y: hasRecs ? h * 0.22 : h * 0.26, label: 'Sub-problem', color: '#4f46e5' },
-    { y: hasRecs ? h * 0.42 : h * 0.50, label: 'Concept', color: '#7c3aed' },
-    { y: hasRecs ? h * 0.62 : h * 0.76, label: 'Paper', color: '#6b7280' },
-    ...(hasRecs ? [{ y: h * 0.85, label: 'Recommended', color: '#16a34a' }] : []),
-  ];
-
-  function handleWheel(e: React.WheelEvent) {
-    e.preventDefault();
-    const factor = e.deltaY > 0 ? 0.9 : 1.1;
-    const rect = containerRef.current!.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
-    setVp(prev => {
-      const newScale = Math.max(0.25, Math.min(4, prev.scale * factor));
-      const sf = newScale / prev.scale;
-      return { x: cx - (cx - prev.x) * sf, y: cy - (cy - prev.y) * sf, scale: newScale };
-    });
-  }
-
-  function handleMouseDown(e: React.MouseEvent) {
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target.closest('[data-node]') || target.closest('button')) return;
-    isDragging.current = true;
-    dragStart.current = { x: e.clientX, y: e.clientY, vpX: vp.x, vpY: vp.y };
-    e.preventDefault();
-  }
-
-  function handleMouseMove(e: React.MouseEvent) {
-    if (!isDragging.current) return;
-    setVp(prev => ({ ...prev, x: dragStart.current.vpX + e.clientX - dragStart.current.x, y: dragStart.current.vpY + e.clientY - dragStart.current.y }));
-  }
-
-  function handleMouseUp() { isDragging.current = false; }
-
-  async function handleTransformFromGraph(sp: SubProblem) {
+  const handleTransformFromGraph = useCallback(async (sp: SubProblem) => {
     if (!activeMsgId || !onTransformSp || graphTransformingId === sp.id) return;
     setGraphTransformingId(sp.id);
     try { await onTransformSp(activeMsgId, sp); }
     finally { setGraphTransformingId(null); }
-  }
+  }, [activeMsgId, onTransformSp, graphTransformingId]);
+
+  useEffect(() => {
+    if (subproblems.length === 0) { setRfNodes([]); setRfEdges([]); return; }
+
+    const conceptIds = new Set(concepts.map(c => c.subproblemId));
+    const existingPaperIds = new Set(Object.values(paperGroups).flat().map(p => p.paperId));
+
+    // Structural nodes/edges for dagre (type only, no data)
+    const structNodes: { id: string; type: string }[] = [{ id: 'business', type: 'business' }];
+    const structEdges: { id: string; source: string; target: string; animated?: boolean }[] = [];
+
+    subproblems.forEach(sp => {
+      structNodes.push({ id: sp.id, type: 'subproblem' });
+      structEdges.push({ id: `b-${sp.id}`, source: 'business', target: sp.id });
+    });
+    concepts.forEach(c => {
+      structNodes.push({ id: 'c-' + c.subproblemId, type: 'concept' });
+      structEdges.push({ id: `sp-c-${c.subproblemId}`, source: c.subproblemId, target: 'c-' + c.subproblemId, animated: true });
+    });
+    Object.entries(paperGroups).forEach(([spId, papers]) => {
+      papers.slice(0, 3).forEach(p => {
+        structNodes.push({ id: p.paperId, type: 'paper' });
+        structEdges.push({ id: `c-${spId}-${p.paperId}`, source: 'c-' + spId, target: p.paperId, animated: true });
+      });
+    });
+    const allPaperNodeIds = Object.values(paperGroups).flat().map(p => p.paperId);
+    recommendations.slice(0, 5).forEach(r => {
+      if (!existingPaperIds.has(r.paperId)) {
+        structNodes.push({ id: r.paperId, type: 'recommend' });
+        if (allPaperNodeIds.length > 0) {
+          structEdges.push({ id: `rec-${r.paperId}`, source: allPaperNodeIds[0], target: r.paperId, animated: true });
+        }
+      }
+    });
+
+    const posMap = computeDagreLayout(structNodes, structEdges);
+
+    // Build final React Flow nodes with full data
+    const finalNodes: RFNode<GNodeData>[] = [];
+
+    finalNodes.push({
+      id: 'business', type: 'business',
+      position: posMap.get('business') ?? { x: 0, y: 0 },
+      data: {
+        label: problem.slice(0, 50) + (problem.length > 50 ? '…' : ''),
+        isSelected: selectedId === 'business',
+      },
+    });
+
+    subproblems.forEach(sp => {
+      finalNodes.push({
+        id: sp.id, type: 'subproblem',
+        position: posMap.get(sp.id) ?? { x: 0, y: 0 },
+        data: {
+          label: sp.text.slice(0, 50) + (sp.text.length > 50 ? '…' : ''),
+          isSelected: selectedId === sp.id,
+          canTransform: !conceptIds.has(sp.id) && !!activeMsgId && !!onTransformSp,
+          isTransforming: graphTransformingId === sp.id,
+          onTransform: () => handleTransformFromGraph(sp),
+        },
+      });
+    });
+
+    concepts.forEach(c => {
+      finalNodes.push({
+        id: 'c-' + c.subproblemId, type: 'concept',
+        position: posMap.get('c-' + c.subproblemId) ?? { x: 0, y: 0 },
+        data: {
+          label: c.keywords.slice(0, 2).join(' · '),
+          subtitle: c.research_fields[0] ?? undefined,
+          isSelected: selectedId === 'c-' + c.subproblemId,
+        },
+      });
+    });
+
+    Object.entries(paperGroups).forEach(([, papers]) => {
+      papers.slice(0, 3).forEach(p => {
+        finalNodes.push({
+          id: p.paperId, type: 'paper',
+          position: posMap.get(p.paperId) ?? { x: 0, y: 0 },
+          data: {
+            label: p.title.slice(0, 38) + (p.title.length > 38 ? '…' : ''),
+            subtitle: p.year ? `${p.year} · ${p.citationCount?.toLocaleString() ?? '?'}` : undefined,
+            isSelected: selectedId === p.paperId,
+          },
+        });
+      });
+    });
+
+    recommendations.slice(0, 5).forEach(r => {
+      if (!existingPaperIds.has(r.paperId)) {
+        finalNodes.push({
+          id: r.paperId, type: 'recommend',
+          position: posMap.get(r.paperId) ?? { x: 0, y: 0 },
+          data: {
+            label: r.title.slice(0, 38) + (r.title.length > 38 ? '…' : ''),
+            subtitle: `PPR ${r.scores.final.toFixed(2)}`,
+            isSelected: selectedId === r.paperId,
+          },
+        });
+      }
+    });
+
+    // Build edges with highlight based on selection
+    const finalEdges: RFEdge[] = structEdges.map(e => {
+      const highlight = (e.source === selectedId || e.target === selectedId);
+      const isRecEdge = e.id.startsWith('rec-');
+      const isConceptEdge = e.id.startsWith('sp-c-');
+      return {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        type: 'smoothstep',
+        animated: e.animated ?? false,
+        style: {
+          stroke: highlight
+            ? '#f59e0b'
+            : isRecEdge ? '#86efac'
+            : isConceptEdge ? '#a78bfa'
+            : e.animated ? '#c7d2fe' : '#ddd6fe',
+          strokeWidth: highlight ? 3 : isConceptEdge ? 2 : 1.5,
+          opacity: highlight ? 1 : 0.65,
+        },
+      };
+    });
+
+    setRfNodes(finalNodes);
+    setRfEdges(finalEdges);
+  }, [problem, subproblems, concepts, paperGroups, recommendations, selectedId, graphTransformingId, activeMsgId, onTransformSp, handleTransformFromGraph]);
 
   if (phase === 'idle') return (
-    <div ref={containerRef} className="flex-1 flex items-center justify-center bg-white">
+    <div className="flex-1 flex items-center justify-center bg-white">
       <p className="text-sm text-zinc-400">Graph appears here after search</p>
     </div>
   );
 
   if (subproblems.length === 0) return (
-    <div ref={containerRef} className="flex-1 flex items-center justify-center bg-white">
+    <div className="flex-1 flex items-center justify-center bg-white">
       <div className="flex flex-col items-center gap-4 text-zinc-400">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/lemon.png" alt="" style={{ width: 40, height: 40, objectFit: 'contain', animation: 'spin 2s linear infinite' }} />
@@ -396,74 +662,24 @@ function GraphPanel({
   );
 
   return (
-    <div ref={containerRef} className="relative flex-1 overflow-hidden bg-white select-none"
-      style={{ cursor: isDragging.current ? 'grabbing' : 'grab' }}
-      onWheel={handleWheel} onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
-
-      {LEVELS.map(({ y, label, color }) => (
-        <div key={label} className="absolute text-xs font-medium pointer-events-none"
-          style={{ left: 10, top: y, transform: 'translateY(-50%)', color, opacity: 0.65, zIndex: 5 }}>{label}</div>
-      ))}
-
-      <div style={{ position: 'absolute', inset: 0, transform: `translate(${vp.x}px, ${vp.y}px) scale(${vp.scale})`, transformOrigin: '0 0' }}>
-        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 1 }}>
-          {[0.14, 0.32, 0.52, 0.72, ...(hasRecs ? [0.78] : [])].map(f => (
-            <line key={f} x1={56} y1={h * f} x2={w} y2={h * f} stroke="#e5e7eb" strokeWidth={1} strokeDasharray="4 4" />
-          ))}
-          {edges.map((e, i) => {
-            const wt = e.weight ?? 1;
-            return (
-              <line key={i} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
-                stroke={e.highlighted ? '#6366f1' : e.dashed ? '#86efac' : '#c7d2fe'}
-                strokeWidth={e.highlighted ? 2.5 : 1 + wt}
-                strokeOpacity={e.highlighted ? 1 : 0.35 + wt * 0.55}
-                strokeDasharray={e.highlighted ? undefined : e.dashed ? '5 3' : undefined}
-                style={{ transition: 'stroke 0.2s' }} />
-            );
-          })}
-        </svg>
-
-        {nodes.map(node => {
-          const c = NODE_COLORS[node.type];
-          const isSel = node.id === selectedId;
-          return (
-            <div key={node.id} data-node="1" className="absolute cursor-pointer"
-              style={{ left: node.x, top: node.y, transform: 'translate(-50%, -50%)', width: NODE_W[node.type], zIndex: 10 }}
-              onClick={ev => { ev.stopPropagation(); onSelect(isSel ? null : node.id); }}>
-              <div style={{ background: c.bg, color: c.text, border: `2px solid ${isSel ? '#f59e0b' : c.border}`, borderRadius: 10, padding: '7px 11px', boxShadow: isSel ? '0 0 0 3px rgba(245,158,11,0.25), 0 2px 8px rgba(0,0,0,0.15)' : '0 1px 4px rgba(0,0,0,0.1)', transition: 'all 0.15s' }}>
-                <p className="text-xs font-medium leading-snug">{node.label}</p>
-                {node.subtitle && <p className="text-xs mt-0.5 opacity-60 truncate">{node.subtitle}</p>}
-              </div>
-            </div>
-          );
-        })}
-
-        {nodes.filter(n => n.type === 'subproblem' && n.id === selectedId && !conceptIds.has(n.id)).map(node => {
-          const fullSp = subproblems.find(s => s.id === node.id);
-          if (!fullSp || !activeMsgId || !onTransformSp) return null;
-          const isTransforming = graphTransformingId === node.id;
-          return (
-            <div key={`btn-${node.id}`} className="absolute" style={{ left: node.x, top: node.y + 32, transform: 'translateX(-50%)', zIndex: 20 }}>
-              <button onClick={e => { e.stopPropagation(); handleTransformFromGraph(fullSp); }} disabled={isTransforming}
-                className="rounded-full border border-indigo-300 bg-white text-indigo-700 px-3 py-1 text-xs font-medium shadow-sm hover:bg-indigo-50 disabled:opacity-50 transition-colors whitespace-nowrap flex items-center gap-1.5">
-                {isTransforming ? <><span className="h-1.5 w-1.5 rounded-full bg-indigo-500 animate-ping" />Mapping…</> : 'Map to concept →'}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Zoom controls */}
-      <div className="absolute bottom-4 right-4 flex flex-col gap-1 z-20">
-        <button onClick={() => setVp(v => { const s = Math.min(4, v.scale * 1.25); const cx = w/2; const cy = h/2; const sf = s/v.scale; return { x: cx-(cx-v.x)*sf, y: cy-(cy-v.y)*sf, scale: s }; })}
-          className="h-8 w-8 rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 shadow-sm flex items-center justify-center text-base font-medium">+</button>
-        <button onClick={() => setVp(v => { const s = Math.max(0.25, v.scale/1.25); const cx = w/2; const cy = h/2; const sf = s/v.scale; return { x: cx-(cx-v.x)*sf, y: cy-(cy-v.y)*sf, scale: s }; })}
-          className="h-8 w-8 rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 shadow-sm flex items-center justify-center text-base font-medium">−</button>
-        <button onClick={() => setVp({ x: 0, y: 0, scale: 1 })} title="Reset"
-          className="h-8 w-8 rounded-lg border border-zinc-200 bg-white text-zinc-400 hover:bg-zinc-50 shadow-sm flex items-center justify-center text-xs">↺</button>
-        {vp.scale !== 1 && <div className="text-center text-xs text-zinc-400 font-medium">{Math.round(vp.scale * 100)}%</div>}
-      </div>
+    <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <ReactFlow
+        nodes={rfNodes}
+        edges={rfEdges}
+        nodeTypes={NODE_TYPES}
+        onNodeClick={(_, node) => onSelect(node.id === selectedId ? null : node.id)}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        elementsSelectable={false}
+        proOptions={{ hideAttribution: true }}
+        style={{ background: '#f8f9ff' }}
+        minZoom={0.15}
+        maxZoom={3}
+      >
+        <Background gap={28} color="#e8eaf0" size={1} />
+        <Controls showInteractive={false} style={{ bottom: 16, right: 16, left: 'unset', top: 'unset' }} />
+        <FitOnStructureChange nodeCount={rfNodes.length} />
+      </ReactFlow>
     </div>
   );
 }
@@ -729,7 +945,7 @@ const EXAMPLES = [
 ];
 
 export default function Explore() {
-  const { user, accessToken, logout, loading, authFetch } = useAuth();
+  const { user, accessToken, logout, loading, authFetch, isPro, checkPlan } = useAuth();
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [started, setStarted] = useState(false);
   const [input, setInput] = useState('');
@@ -743,6 +959,8 @@ export default function Explore() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [pendingProblem, setPendingProblem] = useState<string | null>(null);
   const [activeMsgId, setActiveMsgId] = useState<string | null>(null);
   const businessIdRef = useRef<string>('');
   const sessionSavedRef = useRef(false);
@@ -790,6 +1008,11 @@ export default function Explore() {
   // Step 1: Decompose
   async function handleSearch(problem: string) {
     if (!requireAuth()) return;
+    if (sessions.length >= 1 && !isPro) {
+      setShowPaywall(true);
+      setPendingProblem(problem);
+      return;
+    }
     setStarted(true); setCurrentProblem(problem); setSelectedId(null);
     setSubproblems([]); setConcepts([]); setPaperGroups({}); setRecommendations([]);
     setGraphPhase('decomposing');
@@ -925,6 +1148,16 @@ export default function Explore() {
     return (
       <div className="min-h-screen bg-white flex flex-col font-sans">
         {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
+        {showPaywall && (
+          <ProPaywallModal
+            onClose={() => setShowPaywall(false)}
+            onActivated={async () => {
+              await checkPlan();
+              setShowPaywall(false);
+              if (pendingProblem) { void handleSearch(pendingProblem); setPendingProblem(null); }
+            }}
+          />
+        )}
 
         {/* Nav */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 32px', borderBottom: '1px solid var(--line)' }}>
@@ -991,6 +1224,16 @@ export default function Explore() {
   return (
     <div className="flex h-screen overflow-hidden bg-white font-sans">
       {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
+      {showPaywall && (
+        <ProPaywallModal
+          onClose={() => setShowPaywall(false)}
+          onActivated={async () => {
+            await checkPlan();
+            setShowPaywall(false);
+            if (pendingProblem) { void handleSearch(pendingProblem); setPendingProblem(null); }
+          }}
+        />
+      )}
 
       <DetailPanel
         selectedId={selectedId} subproblems={subproblems} concepts={concepts}
