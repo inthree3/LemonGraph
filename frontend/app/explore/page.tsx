@@ -2033,6 +2033,8 @@ function RightPanel({
   onNewSession,
   onDeleteSession,
   onLogout,
+  isPro,
+  onCancelPro,
   onSelectNode,
   onSubmit,
   onRequireAuth,
@@ -2050,6 +2052,8 @@ function RightPanel({
   onNewSession: () => void;
   onDeleteSession: (id: string) => void;
   onLogout: () => void;
+  isPro: boolean;
+  onCancelPro: () => Promise<void>;
   onSelectNode: (id: string | null) => void;
   onSubmit: (problem: string) => void;
   onRequireAuth: () => boolean;
@@ -2206,22 +2210,37 @@ function RightPanel({
               })}
             </div>
             {user && (
-              <div className="flex items-center gap-2 px-4 py-3 border-t border-zinc-100 bg-zinc-50">
-                <div className="h-6 w-6 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-700 shrink-0">
-                  {(user.display_name ?? user.email)[0].toUpperCase()}
+              <div className="border-t border-zinc-100 bg-zinc-50">
+                <div className="flex items-center gap-2 px-4 py-3">
+                  <div className="h-6 w-6 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-700 shrink-0">
+                    {(user.display_name ?? user.email)[0].toUpperCase()}
+                  </div>
+                  <p className="text-xs text-zinc-600 truncate flex-1">
+                    {user.display_name ?? user.email}
+                  </p>
+                  <button
+                    onClick={() => {
+                      onLogout();
+                      setDropdownOpen(false);
+                    }}
+                    className="text-xs text-zinc-400 hover:text-zinc-700 transition-colors"
+                  >
+                    Log out
+                  </button>
                 </div>
-                <p className="text-xs text-zinc-600 truncate flex-1">
-                  {user.display_name ?? user.email}
-                </p>
-                <button
-                  onClick={() => {
-                    onLogout();
-                    setDropdownOpen(false);
-                  }}
-                  className="text-xs text-zinc-400 hover:text-zinc-700 transition-colors"
-                >
-                  Log out
-                </button>
+                {isPro && (
+                  <div className="px-4 pb-3">
+                    <button
+                      onClick={async () => {
+                        await onCancelPro();
+                        setDropdownOpen(false);
+                      }}
+                      className="w-full text-xs text-red-400 hover:text-red-600 transition-colors text-left"
+                    >
+                      Cancel Pro subscription
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2426,6 +2445,11 @@ export default function Explore() {
     setMessages((prev) =>
       prev.map((m) => (m.id === msgId ? { ...m, ...updates } : m)),
     );
+
+  async function handleCancelPro() {
+    await authFetch(`${API_BASE}/fn/deactivate-pro`, { method: 'POST' });
+    await checkPlan();
+  }
 
   // Step 1: Decompose — appends a new business tree instead of resetting
   async function handleSearch(problem: string) {
@@ -3083,6 +3107,8 @@ export default function Explore() {
         onNewSession={reset}
         onDeleteSession={deleteSession}
         onLogout={logout}
+        isPro={isPro}
+        onCancelPro={handleCancelPro}
         onSelectNode={setSelectedId}
         onSubmit={handleSearch}
         onRequireAuth={requireAuth}

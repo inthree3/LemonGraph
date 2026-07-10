@@ -25,9 +25,13 @@ hack-with-bay-3.0/
 └── frontend/                       ← Next.js 16 app
     └── app/
         ├── layout.tsx              ← Root layout (wraps AuthProvider)
-        ├── page.tsx                ← Full app: initial screen + 3-panel active layout
+        ├── page.tsx                ← Landing page (uses MoatIcon)
+        ├── schema.ts               ← Shared TS types: client graph types + Neo4j payload shapes
         ├── auth/page.tsx           ← Standalone auth page (fallback)
+        ├── components/
+        │   └── MoatIcon.tsx        ← Shared SVG icon component (tree-shaped graph logo)
         ├── contexts/auth.tsx       ← Auth context + authFetch (auto token refresh)
+        ├── explore/page.tsx        ← Full app: initial screen + 3-panel active layout
         └── api/
             ├── decompose/route.ts  ← POST /api/decompose → Butterbase decompose-problem
             ├── transform/route.ts  ← POST /api/transform → Butterbase transform-query
@@ -102,8 +106,10 @@ hack-with-bay-3.0/
 2. If candidates: render dormant nodes; wait for user click to activate → then proceed
 3. `Promise.all` → `POST /api/transform` for each sub-problem (parallel LLM calls)
 4. `Promise.all` → `POST /api/search` + `POST /api/search-patents` for each concept (parallel)
-5. PPR scoring per sub-problem → moat recommendation sentence per sub-problem
-6. Auto-save to Butterbase `sessions` table
+5. When all sub-problems have papers (detected via `ingestDoneRef` guard):
+   - Auto-save to Butterbase `sessions` table (guarded by `sessionSavedRef`)
+   - `POST /fn/ingest-graph` exactly once (guarded by `ingestDoneRef`) → writes 4-level Neo4j graph
+   - `POST /fn/recommend` → PPR scores + recommendations
 
 ---
 
@@ -239,6 +245,8 @@ After activation: `checkPlan()` refreshes `isPro`, modal closes, and the pending
 
 **`POST /fn/activate-pro`** — sets `is_pro = true` for the authenticated user (auth: required, trust-based, no Stripe webhook). CORS-enabled.
 
+**`POST /fn/deactivate-pro`** — sets `is_pro = false`; accessible from session dropdown as "Cancel Pro subscription" (visible only when Pro). For demo/testing.
+
 **Stripe link:** `NEXT_PUBLIC_STRIPE_PRO_LINK` env var in `.env.local` and Vercel. Falls back to `#` if missing — **must be set before demo**.
 
 **Plan comparison shown in modal:** Free = 1 session · Pro = $9/mo, unlimited sessions.
@@ -329,10 +337,24 @@ Searches Semantic Scholar using keywords (preferred over full academic_query). R
 ---
 
 ### `POST /fn/ingest-graph`
-Fetches top-3 papers + 1-hop references via Semantic Scholar batch API → writes to Neo4j CITES graph.
-Stores `specter_v2` embeddings. 2 API calls total (search + batch).
+Writes the full 4-level graph (Business → SubProblem → Concept → Paper) + 1-hop CITES edges to Neo4j.
+All writes use `MERGE` (idempotent). Fetches 1-hop references via Semantic Scholar batch API.
 
-**Request:** `{ "query": "..." }` or `{ "papers": [...] }`
+**Request:**
+```json
+{
+  "business_id": "uuid",
+  "business_text": "original problem text",
+  "subproblems": [{ "id": "uuid", "text": "..." }],
+  "concepts": [{ "subproblemId": "uuid", "academic_query": "...", "keywords": [], "research_fields": [] }],
+  "papers_by_subproblem": { "<subproblemId>": [{ "paperId", "title", "abstract", "year", "citationCount", "authors", "url", "doi" }] }
+}
+```
+
+**Nodes written:** `:Business`, `:SubProblem`, `:Concept`, `:Paper` (core + 1-hop references)
+**Edges written:** `[:DECOMPOSED_INTO]`, `[:ADDRESSES]`, `[:STUDIED_IN]`, `[:CITES]`
+
+**Triggered by:** frontend `autoIngestAndRecommend` — fires exactly once per business when all sub-problems have papers (guarded by `ingestDoneRef`)
 
 ---
 
@@ -357,6 +379,14 @@ Sets `is_pro = true` for the authenticated user in `user_plans`. Auth: required 
 
 ---
 
+### `POST /fn/deactivate-pro`
+Sets `is_pro = false` for the authenticated user in `user_plans`. Auth: required. Used for demo/testing — allows reverting to Free plan. Exposed in the session dropdown as "Cancel Pro subscription" (visible only when `isPro` is true).
+
+**Request:** none (user ID read from JWT)
+**Response:** `{ "success": true }`
+
+---
+
 ### `POST /fn/chat`
 Generic OpenAI-compatible proxy to tokenrouter. Default: `openai/gpt-5.4-nano`.
 
@@ -369,25 +399,28 @@ Generic OpenAI-compatible proxy to tokenrouter. Default: `openai/gpt-5.4-nano`.
 - `/tx/commit` is blocked on Aura Free → must use `/query/v2`
 - GDS not available on Aura Free → PPR implemented in JS
 
-**Current schema (legacy CITES graph):**
+**Current schema (4-level, implemented):**
 ```
-(:Paper {paperId, title, abstract, year, citationCount, authors, url, doi, core, searchRank, embedding})
-(:Paper)-[:CITES]->(:Paper)
+(:Business {id, text, updatedAt})
+(:SubProblem {id, text, business_id})
+(:Concept {subproblem_id, academic_query, keywords[], research_fields[]})
+(:Paper {paperId, title, abstract, year, citationCount, authors, url, doi, core})
+
+(:Business)-[:DECOMPOSED_INTO]->(:SubProblem)
+(:SubProblem)-[:ADDRESSES]->(:Concept)
+(:Concept)-[:STUDIED_IN]->(:Paper)
+(:Paper)-[:CITES]->(:Paper)   ← 1-hop references from Semantic Scholar batch API
 ```
 
 **Target schema (full 5-level + patents, future):**
 ```
 (:Business)-[:EXTENDED_TO {state}]->(:DomainCandidate)
-(:Business)-[:DECOMPOSED_INTO]->(:SubProblem)
 (:DomainCandidate)-[:DECOMPOSED_INTO]->(:SubProblem)
-(:SubProblem)-[:ADDRESSES {similarity, urgency}]->(:Concept)
-(:Concept)-[:STUDIED_IN {relevance, rank_within_concept}]->(:Paper)
 (:Concept)-[:CLAIMED_IN {landscape_density}]->(:Patent)
-(:Paper)-[:CITES {year_gap, co_citation_strength}]->(:Paper)
 (:Patent)-[:CITES]->(:Patent)
 (:Patent)-[:ASSIGNED_TO]->(:Assignee)
 ```
-The ingest-graph function currently writes the legacy CITES schema. The full 5-level Neo4j ingest (including DomainCandidate, Patent, Assignee) is not yet implemented.
+DomainCandidate, Patent, and Assignee nodes are not yet written to Neo4j.
 
 ---
 
@@ -415,12 +448,14 @@ The ingest-graph function currently writes the legacy CITES schema. The full 5-l
 - **Text highlighting in detail panel**: `HighlightableText` wraps long-form text fields; uses `Selection` + `TreeWalker` to compute char offsets, stores `{start, end}[]` per field key in component state, renders highlighted ranges as `<mark>` with `#fef08a` background; floating "✦ Highlight" button appears at selection position via `fixed` positioning
 - **Simplified right panel chat**: `AssistantMessage` shows only phase dots + N sub-problems count + numbered inline list with action links — no paper cards or keyword pills; avoids duplicating graph content in the chat column; paper details are in the left detail panel instead
 - **User-created node (AddNode pattern)**: `SubProblem` has `userCreated?: boolean`; user-created entries use `type: 'domaincandidate'` in React Flow (teal style) vs. `type: 'subproblem'` (indigo) for LLM-generated ones; `handleTransformOne` returns `Promise<Concept>` so `handleAddDomainCandidate` can chain transform → search automatically; `AddNode` phantom node is always in the graph connected from Business with a dashed edge; clicking opens `AddNodeModal`; `onNodeClick` skips `add-node` id to avoid setting `selectedId`
+- **`schema.ts` as single source of truth**: all client-side graph types (`Business`, `SubProblem`, `Concept`, `Paper`, `Recommendation`, `Message`, `Session`, `Phase`) + Neo4j node types + `IngestGraphPayload` live in `frontend/app/schema.ts`; `explore/page.tsx` imports from there rather than defining inline
+- **`MoatIcon` shared component**: SVG tree-graph logo lives in `frontend/app/components/MoatIcon.tsx`; both `page.tsx` and `explore/page.tsx` import from it — no image files used for the logo
+- **`ingestDoneRef` one-shot guard**: `autoIngestAndRecommend` (Neo4j ingest + PPR recommend) fires exactly once per business even with N parallel `handleSearchOne` callbacks; `ingestDoneRef.current` is set to `true` before the async call (race-safe in JS single-thread model); reset in both `handleSearch` (new analysis) and `reset()` (full state wipe) alongside the parallel `sessionSavedRef`
 
 ---
 
 ## Known Limitations / TODOs
 
-- **Neo4j full ingest not yet wired**: Frontend builds the 5-level structure in memory but `ingest-graph` still writes the old CITES schema. Need to update `ingest-graph` to write Business/DomainCandidate/SubProblem/Concept/Paper/Patent nodes.
 - **Patent search not yet implemented**: `search-patents` (PatentsView/USPTO) Butterbase function not yet deployed; frontend pipeline wired to stub.
 - **DomainCandidate UI partially implemented**: User-direct-add (`AddNode` → `AddNodeModal` → teal `DomainCandidateNode`, active state) is done. LLM-suggested dormant candidates (extension step response) are still not rendered — the dormant/active state machine and "Explore this" interaction are not yet built.
 - **Moat recommendation sentence not yet generated**: Step 5 LLM call combining top paper + patent whitespace per sub-problem not yet wired.
