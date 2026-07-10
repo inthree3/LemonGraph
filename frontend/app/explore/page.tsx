@@ -16,72 +16,16 @@ import {
   type Edge as RFEdge,
 } from "@xyflow/react";
 import MoatIcon from "../components/MoatIcon";
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type SubProblem = {
-  id: string;
-  text: string;
-  userCreated?: boolean;
-  businessId: string;
-};
-type Business = { id: string; problem: string; phase: Phase; msgId: string };
-type Concept = {
-  subproblemId: string;
-  academic_query: string;
-  keywords: string[];
-  research_fields: string[];
-};
-type Paper = {
-  paperId: string;
-  title: string;
-  abstract: string | null;
-  year: number | null;
-  citationCount: number | null;
-  authors: string[];
-  url: string | null;
-  doi: string | null;
-  rank?: number;
-};
-type Recommendation = {
-  paperId: string;
-  title: string;
-  year: number | null;
-  citationCount: number | null;
-  authors: string;
-  url: string | null;
-  scores: { final: number; semantic: number; ppr: number; recency: number };
-};
-type Phase =
-  | "idle"
-  | "decomposing"
-  | "done"
-  | "ingesting"
-  | "recommending"
-  | "error";
-
-type Message = {
-  id: string;
-  role: "user" | "assistant";
-  problem?: string;
-  phase?: Phase;
-  subproblems?: SubProblem[];
-  concepts?: Concept[];
-  paperGroups?: Record<string, Paper[]>;
-  recommendations?: Recommendation[];
-  error?: string;
-};
-
-type Session = {
-  id: string;
-  title: string;
-  problem: string;
-  academic_query: string | null;
-  keywords: unknown;
-  research_fields: unknown;
-  papers: unknown;
-  created_at: string;
-};
+import type {
+  Phase,
+  Business,
+  SubProblem,
+  Concept,
+  Paper,
+  Recommendation,
+  Message,
+  Session,
+} from '../schema';
 
 function parseField<T>(v: unknown, fb: T): T {
   if (Array.isArray(v) || (v && typeof v === "object")) return v as T;
@@ -2398,6 +2342,7 @@ export default function Explore() {
   const [showAddNodeModal, setShowAddNodeModal] = useState(false);
   const [activeMsgId, setActiveMsgId] = useState<string | null>(null);
   const sessionSavedRef = useRef(false);
+  const ingestDoneRef = useRef(false);
   const businessesRef = useRef<Business[]>([]);
   businessesRef.current = businesses;
   const conceptsRef = useRef<Concept[]>([]);
@@ -2501,6 +2446,7 @@ export default function Explore() {
     setActiveMsgId(aiId);
     setSelectedId(null);
     sessionSavedRef.current = false;
+    ingestDoneRef.current = false;
 
     setMessages((prev) => [
       ...prev,
@@ -2650,7 +2596,21 @@ export default function Explore() {
       }
     }
 
-    autoIngestAndRecommend(msgId, biz, allConcepts, newGroups);
+    const bizSpsAll = subproblemsRef2.current.filter(
+      (sp) => biz && sp.businessId === biz.id,
+    );
+    const bizConceptsAll = allConcepts.filter((c) =>
+      bizSpsAll.some((sp) => sp.id === c.subproblemId),
+    );
+    const allPapersIn =
+      bizSpsAll.length > 0 &&
+      bizConceptsAll.length === bizSpsAll.length &&
+      bizConceptsAll.every((c) => newGroups[c.subproblemId]?.length > 0);
+
+    if (allPapersIn && !ingestDoneRef.current) {
+      ingestDoneRef.current = true;
+      autoIngestAndRecommend(msgId, biz, allConcepts, newGroups);
+    }
   }
 
   async function autoIngestAndRecommend(
