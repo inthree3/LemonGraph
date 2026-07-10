@@ -25,6 +25,7 @@ import type {
   Recommendation,
   Message,
   Session,
+  GraphState,
 } from '../schema';
 
 function parseField<T>(v: unknown, fb: T): T {
@@ -2360,6 +2361,7 @@ export default function Explore() {
   const [pendingProblem, setPendingProblem] = useState<string | null>(null);
   const [showAddNodeModal, setShowAddNodeModal] = useState(false);
   const [activeMsgId, setActiveMsgId] = useState<string | null>(null);
+  const [forceActive, setForceActive] = useState(false);
   const sessionSavedRef = useRef(false);
   const ingestDoneRef = useRef(false);
   const businessesRef = useRef<Business[]>([]);
@@ -2371,7 +2373,7 @@ export default function Explore() {
   const paperGroupsRef = useRef<Record<string, Paper[]>>({});
   paperGroupsRef.current = paperGroups;
 
-  const started = businesses.length > 0;
+  const started = businesses.length > 0 || forceActive;
 
   useEffect(() => {
     if (user) setShowAuthModal(false);
@@ -2415,13 +2417,23 @@ export default function Explore() {
   function loadSession(s: Session) {
     const worldId = s.id;
     const aiId = "a-" + s.id;
+
+    const gs: GraphState = parseField<GraphState>(s.graph_state, {
+      subproblems: [],
+      concepts: [],
+      paperGroups: {},
+    });
+
+    // Remap businessId to current worldId — old sessions may have a stale id
+    const restoredSps = gs.subproblems.map((sp) => ({ ...sp, businessId: worldId }));
+
     setActiveSessionId(s.id);
     setBusinesses([
       { id: worldId, problem: s.problem, phase: "done", msgId: aiId },
     ]);
-    setSubproblems([]);
-    setConcepts([]);
-    setPaperGroups({});
+    setSubproblems(restoredSps);
+    setConcepts(gs.concepts);
+    setPaperGroups(gs.paperGroups);
     setRecommendations([]);
     setSelectedId(null);
     setMessages([
@@ -2430,15 +2442,14 @@ export default function Explore() {
         id: aiId,
         role: "assistant",
         phase: "done",
-        subproblems: [],
-        concepts: [],
-        paperGroups: {},
+        subproblems: restoredSps,
+        concepts: gs.concepts,
+        paperGroups: gs.paperGroups,
         recommendations: [],
       },
     ]);
     setActiveMsgId(aiId);
     sessionSavedRef.current = true;
-    void parseField(s.papers, []);
   }
 
   const updateAiMsg = (msgId: string, updates: Partial<Message>) =>
@@ -2614,6 +2625,11 @@ export default function Explore() {
               bizConcepts.flatMap((c) => c.research_fields),
             ),
             papers: JSON.stringify(allPapers),
+            graph_state: JSON.stringify({
+              subproblems: bizSps,
+              concepts: bizConcepts,
+              paperGroups: newGroups,
+            }),
           }),
         })
           .then(() => fetchSessions())
@@ -3025,6 +3041,15 @@ export default function Explore() {
                   Analyze →
                 </button>
               </div>
+            </div>
+
+            <div className="mt-4 text-center">
+              <button
+                onClick={() => setForceActive(true)}
+                className="text-xs text-zinc-400 hover:text-indigo-600 transition-colors underline underline-offset-2"
+              >
+                Open workspace without analyzing →
+              </button>
             </div>
           </div>
         </div>

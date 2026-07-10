@@ -63,6 +63,12 @@ export type Message = {
   error?: string;
 };
 
+export type GraphState = {
+  subproblems: SubProblem[];
+  concepts: Concept[];
+  paperGroups: Record<string, Paper[]>;
+};
+
 export type Session = {
   id: string;
   title: string;
@@ -71,6 +77,7 @@ export type Session = {
   keywords: unknown;
   research_fields: unknown;
   papers: unknown;
+  graph_state: GraphState | null;
   created_at: string;
 };
 
