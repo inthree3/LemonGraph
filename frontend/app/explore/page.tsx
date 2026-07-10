@@ -2390,6 +2390,7 @@ export default function Explore() {
     setActiveSessionId(null);
     setActiveMsgId(null);
     sessionSavedRef.current = false;
+    ingestDoneRef.current = false;
   }
 
   function loadSession(s: Session) {
