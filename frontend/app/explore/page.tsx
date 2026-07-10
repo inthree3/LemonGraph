@@ -15,6 +15,7 @@ import {
   type Node as RFNode,
   type Edge as RFEdge,
 } from "@xyflow/react";
+import MoatIcon from "../components/MoatIcon";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -2054,17 +2055,9 @@ function AssistantMessage({
 
       {isIngesting && (
         <div className="flex items-center gap-2 py-1 text-xs text-zinc-400">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/lemon.png"
-            alt=""
-            style={{
-              width: 12,
-              height: 12,
-              objectFit: "contain",
-              animation: "spin 1.5s linear infinite",
-            }}
-          />
+          <span style={{ display: "inline-flex", animation: "spin 1.5s linear infinite" }}>
+            <MoatIcon size={12} />
+          </span>
           {msg.phase === "ingesting"
             ? "Saving to Neo4j graph…"
             : "Computing PPR recommendations…"}
@@ -2918,12 +2911,9 @@ export default function Explore() {
               textDecoration: "none",
             }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/lemon.png"
-              alt=""
-              style={{ width: 22, height: 22, objectFit: "contain" }}
-            />
+            <span style={{ color: "var(--indigo)" }}>
+              <MoatIcon size={22} />
+            </span>
             <span
               style={{
                 fontFamily: "var(--mono)",
@@ -2975,12 +2965,9 @@ export default function Explore() {
         <div className="flex-1 flex items-center justify-center px-6 py-16">
           <div style={{ width: "100%", maxWidth: 600 }}>
             <div className="flex items-center gap-3 mb-6">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/lemon.png"
-                alt=""
-                style={{ width: 36, height: 36, objectFit: "contain" }}
-              />
+              <span style={{ color: "var(--indigo)" }}>
+                <MoatIcon size={36} />
+              </span>
               <h1
                 style={{
                   fontFamily: "var(--serif)",
